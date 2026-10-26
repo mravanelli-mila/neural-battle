@@ -1,0 +1,643 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Neural Battle Mixer</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;700&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script>
+  // ---- 1. Paste your Firebase web app config here (Firebase console → Project settings → Your apps → Web app) ----
+  const FIREBASE_CONFIG = {
+    apiKey: "AIzaSyCvTjvMOwsmkzvQh6Z2JRSBVdsthIBw8kM",
+    authDomain: "neural-battle.firebaseapp.com",
+    projectId: "neural-battle",
+    appId: "1:48833727309:web:09db796bb029160e0a4504",
+  };
+  // ---- 2. Several pairs can play at once: open the page as index.html?room=anything to get a separate table ----
+</script>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+  /* Layout: a two-deck DJ setup shared online. Lobby strip, then dataset + clock across the top, then one mixer per player side by side. Single dark theme by design (it is a piece of gear). */
+  :root {
+    --bg: #15171a;
+    --panel: #1f2226;
+    --panel-edge: #2c3036;
+    --fg: #e6e4de;
+    --muted: #8d9198;
+    --accent: #ff9f1c;
+    --p1: #ff9f1c;
+    --p2: #c77dff;
+    --pos: #4cc9f0;
+    --neg: #f25f5c;
+    --ok: #7bd389;
+    --knob: #2b2f35;
+    --knob-rim: #3a3f47;
+    --display: "Chakra Petch", "Trebuchet MS", sans-serif;
+    --mono: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace;
+    color-scheme: dark;
+  }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font-family: var(--mono); font-size: 14px; line-height: 1.45;
+    padding-block: 20px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  .rig { max-width: 1180px; margin: 0 auto; display: grid; gap: 16px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; }
+  h1 { font-family: var(--display); font-weight: 700; font-size: 1.6rem; letter-spacing: .06em; margin: 0; text-transform: uppercase; }
+  h1 span { color: var(--accent); }
+  header p { margin: 0; color: var(--muted); font-size: .85rem; max-width: 64ch; }
+
+  .panel { background: var(--panel); border: 1px solid var(--panel-edge); border-radius: 6px; padding: 14px; min-width: 0; }
+  .label { font-family: var(--display); font-size: .72rem; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin: 0 0 10px; }
+
+  /* lobby */
+  .lobby { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; font-size: .82rem; }
+  .lobby .seat { display: flex; align-items: center; gap: 8px; }
+  .lobby .seat i { width: 10px; height: 10px; border-radius: 50%; background: #0b0c0e; border: 1px solid var(--panel-edge); }
+  .lobby .seat.a.taken i { background: var(--p1); border-color: var(--p1); }
+  .lobby .seat.b.taken i { background: var(--p2); border-color: var(--p2); }
+  .lobby .you { font-family: var(--display); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+  .lobby .msg { color: var(--muted); flex: 1 1 100%; }
+  .lobby .msg.warn { color: var(--neg); }
+
+  /* top bar: dataset + clock */
+  .top { display: grid; grid-template-columns: 1fr 1fr auto; gap: 16px; }
+  @media (max-width: 900px) { .top { grid-template-columns: 1fr; } }
+  .samples { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .sample { display: grid; gap: 4px; justify-items: center; }
+  .px { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; width: 72px; aspect-ratio: 1; max-width: 100%; background: #0b0c0e; padding: 3px; border-radius: 3px; box-sizing: border-box; }
+  .sample .lbl { font-family: var(--display); font-size: .7rem; letter-spacing: .08em; text-transform: uppercase; padding: 1px 7px; border-radius: 3px; background: #0b0c0e; color: var(--muted); }
+  .sample .lbl.c1 { color: var(--pos); border: 1px solid var(--pos); }
+  .sample .lbl.c0 { color: var(--neg); border: 1px solid var(--neg); }
+  .px i { background: #1c1f24; border-radius: 1px; }
+  .px i.on { background: var(--fg); }
+  .sample .tag { font-size: .68rem; color: var(--muted); }
+  .sample .dots { display: flex; gap: 6px; font-size: .72rem; font-variant-numeric: tabular-nums; }
+  .sample .dots span::before { content: "●"; margin-right: 3px; color: #3a3f47; }
+  .sample .dots span.hit::before { color: var(--ok); }
+  .sample .dots span.miss::before { color: var(--neg); }
+  .sample .dots .a { color: var(--p1); } .sample .dots .b { color: var(--p2); }
+  .placeholder { color: var(--muted); font-size: .78rem; margin: 0; }
+  .classes { color: var(--muted); font-size: .78rem; margin: 10px 0 0; }
+  .classes .cls { font-family: var(--display); font-size: 1rem; color: var(--fg); background: #0b0c0e; border-radius: 3px; padding: 0 6px; }
+
+  .clock { display: grid; gap: 10px; align-content: start; min-width: 200px; }
+  .big { font-family: var(--display); font-weight: 700; font-size: 3rem; line-height: 1; font-variant-numeric: tabular-nums; }
+  .big.small { font-size: 2.2rem; color: var(--fg); }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; }
+  button {
+    font-family: var(--display); letter-spacing: .08em; text-transform: uppercase; font-size: .78rem;
+    background: #2a2e34; color: var(--fg); border: 1px solid var(--panel-edge); border-radius: 4px;
+    padding: 8px 12px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button:disabled { opacity: .4; cursor: default; }
+  button.go { background: var(--accent); color: #15171a; border-color: var(--accent); font-weight: 700; }
+  select { font-family: var(--mono); background: #2a2e34; color: var(--fg); border: 1px solid var(--panel-edge); border-radius: 4px; padding: 6px; }
+  .verdict { font-family: var(--display); letter-spacing: .08em; text-transform: uppercase; color: var(--ok); margin: 0; min-height: 1.4em; }
+
+  /* players */
+  .players { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .players { grid-template-columns: 1fr; } }
+  .player { border-top: 3px solid var(--pc); display: grid; gap: 12px; }
+  .player.a { --pc: var(--p1); } .player.b { --pc: var(--p2); }
+  .player.winner { box-shadow: 0 0 0 2px var(--pc); }
+  .player.remote .bank { opacity: .75; }
+  .player.remote .knob { cursor: default; }
+  .player.empty .bank, .player.empty .lossbox, .player.empty .leds, .player.empty .stats { opacity: .3; }
+  .phead { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .pname { font-family: var(--display); font-weight: 700; font-size: 1.1rem; letter-spacing: .06em; text-transform: uppercase; color: var(--pc); background: none; border: none; padding: 0; min-width: 0; width: 50%; }
+  .pname:focus-visible { outline: 2px solid var(--pc); outline-offset: 2px; border-radius: 3px; }
+  .pname:disabled { color: var(--pc); opacity: 1; }
+  .who { font-size: .7rem; color: var(--muted); }
+  .lossbox { display: flex; align-items: baseline; gap: 10px; }
+  .lossbox .big { color: var(--pc); font-size: 2.4rem; }
+  .lossbox .cap { font-size: .72rem; color: var(--muted); }
+  .leds { display: flex; gap: 3px; height: 10px; }
+  .leds i { flex: 1; background: #0b0c0e; border-radius: 2px; }
+  .leds i.lit { background: var(--ok); }
+  .leds i.lit.warm { background: var(--accent); }
+  .leds i.lit.hot { background: var(--neg); }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px 12px; font-size: .74rem; color: var(--muted); }
+  .stats b { display: block; color: var(--fg); font-variant-numeric: tabular-nums; font-size: .9rem; }
+  .stats .t b { color: var(--pc); }
+
+  .bank { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .ch { display: grid; justify-items: center; gap: 2px; background: #181a1e; border-radius: 4px; padding: 6px 2px; }
+  .ch .val { font-size: .68rem; font-variant-numeric: tabular-nums; min-width: 5ch; text-align: center; }
+  .ch .val.p { color: var(--pos); } .ch .val.n { color: var(--neg); }
+  .knob { width: 56px; height: 56px; max-width: 100%; cursor: ns-resize; touch-action: none; border-radius: 50%; user-select: none; }
+  .knob:focus-visible { outline: 2px solid var(--pc); outline-offset: 2px; }
+  .knob .track { stroke: #0b0c0e; }
+  .knob .arc.p { stroke: var(--pos); } .knob .arc.n { stroke: var(--neg); }
+  .knob .cap { fill: var(--knob); stroke: var(--knob-rim); }
+  .knob .ptr { stroke: var(--fg); }
+  .ch .pix { width: 10px; height: 10px; border-radius: 2px; background: #0b0c0e; }
+  .ch .pix.on { background: var(--fg); }
+  .pfoot { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .hint { font-size: .7rem; color: var(--muted); margin: 0; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="rig">
+  <header>
+    <h1>Neural <span>Battle</span></h1>
+    <p>Two mixers, one dataset, online. Each game draws two characters from 0–9 and A–Z; each player tunes 16 weights of their own logistic regression (bias fixed at 0) to tell them apart. When the clock runs out, 6 unseen test images decide the winner: lowest test loss takes it.</p>
+  </header>
+
+  <section class="panel lobby" id="lobby">
+    <span class="seat a" id="seatA"><i></i>Seat 1: <b>open</b></span>
+    <span class="seat b" id="seatB"><i></i>Seat 2: <b>open</b></span>
+    <span class="you" id="you">connecting…</span>
+    <button id="leave" type="button" hidden>Leave seat</button>
+    <button id="resetTable" type="button" hidden>Reset table</button>
+    <span class="msg" id="lobbymsg">Opening the table…</span>
+  </section>
+
+  <div class="top">
+    <section class="panel">
+      <p class="label">Training set · 6 images</p>
+      <div class="samples" id="samples"></div>
+      <p class="classes" id="classes"></p>
+    </section>
+
+    <section class="panel">
+      <p class="label">Test set · 6 unseen images</p>
+      <div class="samples" id="testsamples"></div>
+      <p class="placeholder" id="testph">Hidden until the round ends.</p>
+    </section>
+
+    <section class="panel clock">
+      <p class="label">Clock</p>
+      <div class="big small" id="clock">01:00</div>
+      <div class="controls">
+        <button class="go" id="start" type="button">Start round</button>
+        <select id="dur" aria-label="Round length">
+          <option value="30">30 s</option>
+          <option value="60" selected>60 s</option>
+          <option value="120">120 s</option>
+        </select>
+      </div>
+      <div class="controls">
+        <button id="reveal" type="button">Reveal test set</button>
+        <button id="newgame" type="button">New game</button>
+      </div>
+      <p class="verdict" id="verdict"></p>
+    </section>
+  </div>
+
+  <div class="players" id="players"></div>
+  <p class="hint">Drag a knob up or down, or scroll over it. Arrow keys work too; double-click resets to 0. You can only turn the knobs on your own mixer.</p>
+</div>
+
+<script>
+(function () {
+  const N = 16;
+  const $ = id => document.getElementById(id);
+  const sigmoid = z => 1 / (1 + Math.exp(-z));
+  const rnd = n => Math.floor(Math.random() * n);
+
+  // ---------- glyph font ----------
+  const FONT = {
+    "0": "1111 1001 1001 1111", "1": "0010 0110 0010 0010", "2": "1111 0011 1100 1111", "3": "1111 0110 0001 1111",
+    "4": "1001 1001 1111 0001", "5": "1111 1110 0001 1111", "6": "1111 1000 1111 1111", "7": "1111 0001 0010 0100",
+    "8": "1111 1111 1001 1111", "9": "1111 1001 1111 0001",
+    A: "0110 1001 1111 1001", B: "1110 1110 1001 1110", C: "0111 1000 1000 0111", D: "1110 1001 1001 1110",
+    E: "1111 1110 1000 1111", F: "1111 1110 1000 1000", G: "0111 1000 1011 0111", H: "1001 1111 1001 1001",
+    I: "1110 0100 0100 1110", J: "0011 0001 1001 0110", K: "1001 1110 1010 1001", L: "1000 1000 1000 1111",
+    M: "1001 1111 1111 1001", N: "1001 1101 1011 1001", O: "0110 1001 1001 0110", P: "1110 1001 1110 1000",
+    Q: "0110 1001 1011 0111", R: "1110 1001 1110 1001", S: "0111 1100 0011 1110", T: "1111 0100 0100 0100",
+    U: "1001 1001 1001 0110", V: "1001 1001 1010 0100", W: "1001 1001 1111 0110", X: "1001 0110 0110 1001",
+    Y: "1001 0110 0100 0100", Z: "1111 0010 0100 1111",
+  };
+  const CHARS = Object.keys(FONT);
+  const glyph = ch => FONT[ch].replace(/ /g, "").split("").map(Number);
+  function shifted(x, dr, dc) {
+    const out = new Array(N).fill(0);
+    for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) {
+      if (!x[r * 4 + c]) continue;
+      const nr = r + dr, nc = c + dc;
+      if (nr < 0 || nr > 3 || nc < 0 || nc > 3) return null;
+      out[nr * 4 + nc] = 1;
+    }
+    return out;
+  }
+  function variants(ch) {
+    const base = glyph(ch), out = [{ x: base, name: "clean" }];
+    for (const [dr, dc, nm] of [[-1, 0, "up"], [1, 0, "down"], [0, -1, "left"], [0, 1, "right"]]) {
+      const s = shifted(base, dr, dc); if (s) out.push({ x: s, name: nm });
+    }
+    for (let i = 0; i < N; i++) { const x = base.slice(); x[i] ^= 1; out.push({ x, name: x[i] ? "+px" : "−px" }); }
+    return out;
+  }
+  function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = rnd(i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+  function deal() {
+    const [c1, c0] = shuffle(CHARS.slice()).slice(0, 2);
+    const train = [], test = [];
+    for (const [ch, y] of [[c1, 1], [c0, 0]]) {
+      const v = variants(ch), clean = v.shift();
+      const seen = new Set([clean.x.join("")]);
+      const rest = shuffle(v).filter(d => { const k = d.x.join(""); if (seen.has(k)) return false; seen.add(k); return true; });
+      train.push({ ...clean, y }, ...rest.slice(0, 2).map(d => ({ ...d, y })));
+      test.push(...rest.slice(2, 5).map(d => ({ ...d, y })));
+    }
+    return { classes: [c1, c0], train, test };
+  }
+
+  // ---------- model ----------
+  function predict(w, x) { let z = 0; for (let i = 0; i < N; i++) z += w[i] * x[i]; return sigmoid(z); }
+  function lossOn(w, set) {
+    const eps = 1e-7; let s = 0;
+    for (const d of set) {
+      const p = Math.min(1 - eps, Math.max(eps, predict(w, d.x)));
+      s += -(d.y * Math.log(p) + (1 - d.y) * Math.log(1 - p));
+    }
+    return s / set.length;
+  }
+
+  // ---------- knob geometry ----------
+  const SWEEP = 135, R = 23, C = 28;
+  const polar = deg => { const a = (deg - 90) * Math.PI / 180; return [C + R * Math.cos(a), C + R * Math.sin(a)]; };
+  function arcPath(v) {
+    const end = v * SWEEP; if (Math.abs(end) < 0.5) return "";
+    const [x0, y0] = polar(0), [x1, y1] = polar(end);
+    return `M ${x0} ${y0} A ${R} ${R} 0 0 ${end > 0 ? 1 : 0} ${x1} ${y1}`;
+  }
+  const trackPath = (() => { const [a, b] = polar(-SWEEP), [c, d] = polar(SWEEP); return `M ${a} ${b} A ${R} ${R} 0 1 1 ${c} ${d}`; })();
+
+  // ---------- shared state (mirrored from db) ----------
+  // game/state: { phase: "lobby"|"running"|"revealed", classes, train, test, startAt, duration, best:{a,b} }
+  // seats/a, seats/b: { uid, name }
+  // players/a, players/b: { w:[16], moves }
+  let G = { phase: "lobby", classes: ["?", "?"], train: [], test: [], startAt: 0, duration: 60 };
+  let SEATS = { a: null, b: null };
+  let mySeat = null, myId = null, db = null, online = false;
+  const revealed = () => G.phase === "revealed";
+  const DATA = () => G.train, TEST = () => G.test;
+
+  // ---------- player ----------
+  class Player {
+    constructor(key) {
+      this.key = key; this.w = new Array(N).fill(0); this.moves = 0; this.local = false;
+      const el = document.createElement("section");
+      el.className = "panel player empty " + key;
+      el.innerHTML = `
+        <div class="phead">
+          <input class="pname" value="Seat ${key === "a" ? 1 : 2}" aria-label="player name" disabled>
+          <span class="who">waiting for a player</span>
+        </div>
+        <div class="lossbox"><div class="big loss">0.693</div><span class="cap">train loss</span></div>
+        <div class="leds">${"<i></i>".repeat(12)}</div>
+        <div class="stats">
+          <div>best train<b class="best">–</b></div>
+          <div>train correct<b class="acc">– / 6</b></div>
+          <div>moves<b class="moves">0</b></div>
+          <div class="t">test loss<b class="tloss">–</b></div>
+          <div>test correct<b class="tacc">– / 6</b></div>
+          <div>train→test gap<b class="gap">–</b></div>
+        </div>
+        <div class="bank"></div>
+        <div class="pfoot"><button type="button" class="zero" disabled>Zero all</button></div>`;
+      $("players").appendChild(el);
+      this.el = el;
+      this.bank = el.querySelector(".bank");
+      this.knobs = [];
+      for (let i = 0; i < N; i++) this.addKnob(i);
+      el.querySelector(".zero").addEventListener("click", () => { if (this.local) { this.w.fill(0); this.moves++; this.changed(); } });
+      const nameIn = el.querySelector(".pname");
+      nameIn.addEventListener("change", () => { if (this.local && db) db.doc("seats/" + key).update({ name: nameIn.value.slice(0, 20) }).catch(() => {}); });
+    }
+    addKnob(i) {
+      const ch = document.createElement("div");
+      ch.className = "ch";
+      ch.innerHTML = `<div class="val">+0.00</div>
+        <svg class="knob" viewBox="0 0 56 56" tabindex="0" role="slider" aria-label="${this.key} weight ${i}" aria-valuemin="-1" aria-valuemax="1" aria-valuenow="0">
+          <path class="track" d="${trackPath}" fill="none" stroke-width="3.5" stroke-linecap="round"/>
+          <path class="arc" d="" fill="none" stroke-width="3.5" stroke-linecap="round"/>
+          <circle class="cap" cx="28" cy="28" r="16" stroke-width="2"/>
+          <line class="ptr" x1="28" y1="28" x2="28" y2="14" stroke-width="3" stroke-linecap="round" transform="rotate(0 28 28)"/>
+        </svg>
+        <div class="pix"></div>`;
+      this.bank.appendChild(ch);
+      const svg = ch.querySelector("svg");
+      this.knobs.push(ch);
+      const set = v => {
+        if (!this.local || G.phase !== "running") return;
+        v = Math.max(-1, Math.min(1, Math.round(v * 20) / 20));
+        if (v !== this.w[i]) { this.w[i] = v; this.moves++; this.changed(); }
+      };
+      let dragY = null, dragV = 0;
+      svg.addEventListener("pointerdown", e => { dragY = e.clientY; dragV = this.w[i]; svg.setPointerCapture(e.pointerId); e.preventDefault(); });
+      svg.addEventListener("pointermove", e => { if (dragY !== null) set(dragV + (dragY - e.clientY) / 100); });
+      const up = () => { dragY = null; };
+      svg.addEventListener("pointerup", up); svg.addEventListener("pointercancel", up);
+      svg.addEventListener("wheel", e => { e.preventDefault(); set(this.w[i] - Math.sign(e.deltaY) * 0.05); }, { passive: false });
+      svg.addEventListener("dblclick", () => set(0));
+      svg.addEventListener("keydown", e => {
+        if (e.key === "ArrowUp" || e.key === "ArrowRight") { set(this.w[i] + 0.05); e.preventDefault(); }
+        if (e.key === "ArrowDown" || e.key === "ArrowLeft") { set(this.w[i] - 0.05); e.preventDefault(); }
+        if (e.key === "0") set(0);
+      });
+    }
+    // local change: render now, push to db after a short pause
+    changed() {
+      this.render();
+      clearTimeout(this.t);
+      this.t = setTimeout(() => this.push(), 120);
+    }
+    async push() {
+      if (!db || !this.local || this.pushing) { if (this.pushing) this.dirty = true; return; }
+      this.pushing = true; this.dirty = false;
+      try { await db.doc("players/" + this.key).set({ w: this.w.slice(), moves: this.moves }); } catch (e) {}
+      this.pushing = false;
+      if (this.dirty) this.push();
+    }
+    applyRemote(d) {
+      if (this.local) return;
+      if (d && Array.isArray(d.w) && d.w.length === N) { this.w = d.w.map(Number); this.moves = d.moves | 0; }
+      else { this.w.fill(0); this.moves = 0; }
+      this.render();
+    }
+    setSeat(seat) {
+      const taken = !!seat;
+      this.local = taken && seat.uid === myId;
+      this.el.classList.toggle("empty", !taken);
+      this.el.classList.toggle("remote", taken && !this.local);
+      const nameIn = this.el.querySelector(".pname");
+      if (document.activeElement !== nameIn) nameIn.value = taken ? (seat.name || `Player ${this.key === "a" ? 1 : 2}`) : `Seat ${this.key === "a" ? 1 : 2}`;
+      nameIn.disabled = !this.local;
+      this.el.querySelector(".zero").disabled = !this.local;
+      this.el.querySelector(".who").textContent = !taken ? "waiting for a player" : this.local ? "this is you" : "remote player";
+    }
+    name() { return this.el.querySelector(".pname").value || `Player ${this.key === "a" ? 1 : 2}`; }
+    refreshPix() {
+      for (let i = 0; i < N; i++) {
+        const n = DATA().filter(d => d.x[i]).length;
+        const pix = this.knobs[i].querySelector(".pix");
+        pix.title = `pixel ${i}: lit in ${n} of 6 training images`;
+        pix.classList.toggle("on", n >= 3);
+      }
+    }
+    render() {
+      const q = s => this.el.querySelector(s);
+      const L = DATA().length ? lossOn(this.w, DATA()) : Math.LN2;
+      q(".loss").textContent = L.toFixed(3);
+      const best = (G.best || {})[this.key];
+      q(".best").textContent = best == null ? "–" : (+best).toFixed(3);
+      if (this.local && G.phase === "running" && (best == null || L < best - 1e-9)) {
+        clearTimeout(this.bt); this.bt = setTimeout(() => db && db.doc("game/state").update({ ["best." + this.key]: L }).catch(() => {}), 300);
+        q(".best").textContent = L.toFixed(3);
+      }
+      q(".moves").textContent = this.moves;
+      for (let i = 0; i < N; i++) {
+        const ch = this.knobs[i], v = this.w[i];
+        const val = ch.querySelector(".val");
+        val.textContent = (v >= 0 ? "+" : "") + v.toFixed(2);
+        val.className = "val " + (v > 0 ? "p" : v < 0 ? "n" : "");
+        ch.querySelector(".ptr").setAttribute("transform", `rotate(${v * SWEEP} 28 28)`);
+        const arc = ch.querySelector(".arc");
+        arc.setAttribute("d", arcPath(v));
+        arc.setAttribute("class", "arc " + (v > 0 ? "p" : v < 0 ? "n" : ""));
+        ch.querySelector("svg").setAttribute("aria-valuenow", v);
+      }
+      const lit = Math.round(12 * Math.max(0, Math.min(1, (Math.log(0.693) - Math.log(Math.max(L, 0.05))) / (Math.log(0.693) - Math.log(0.05)))));
+      [...q(".leds").children].forEach((el, i) => { el.className = i < lit ? "lit " + (i < 5 ? "hot" : i < 9 ? "warm" : "") : ""; });
+      q(".acc").textContent = (DATA().length ? markCards(this, DATA(), cards) : "–") + " / 6";
+      if (revealed() && TEST().length) {
+        const tl = lossOn(this.w, TEST());
+        q(".tloss").textContent = tl.toFixed(3);
+        q(".tacc").textContent = markCards(this, TEST(), testcards) + " / 6";
+        const gap = tl - L;
+        q(".gap").textContent = (gap >= 0 ? "+" : "") + gap.toFixed(3);
+      } else { q(".tloss").textContent = "–"; q(".tacc").textContent = "– / 6"; q(".gap").textContent = "–"; }
+    }
+  }
+
+  // ---------- shared cards ----------
+  let cards = [], testcards = [];
+  function makeCards(set, host, reveal) {
+    host.innerHTML = "";
+    return set.map(d => {
+      const el = document.createElement("div");
+      el.className = "sample";
+      const ch = G.classes[d.y ? 0 : 1];
+      el.innerHTML = `<div class="lbl c${d.y}">${reveal ? `class ${d.y} · ${ch}` : "class ?"}</div>
+        <div class="px">${d.x.map(v => `<i class="${v && reveal ? "on" : ""}"></i>`).join("")}</div>
+        <div class="dots"><span class="a">A</span><span class="b">B</span></div><div class="tag">${reveal ? d.name : "hidden"}</div>`;
+      host.appendChild(el);
+      return el;
+    });
+  }
+  function markCards(p, set, els) {
+    let correct = 0;
+    set.forEach((d, k) => {
+      if (!els[k]) return;
+      const dot = els[k].querySelector("." + p.key);
+      if (!revealed() && set === TEST()) { dot.className = p.key; return; }
+      const hit = (predict(p.w, d.x) >= 0.5) === (d.y === 1);
+      if (hit) correct++;
+      dot.className = p.key + (hit ? " hit" : " miss");
+    });
+    return correct;
+  }
+  let cardsKey = "";
+  function buildCards() {
+    const key = G.classes.join("") + G.train.length + G.phase;
+    if (key === cardsKey) return;
+    cardsKey = key;
+    cards = makeCards(DATA(), $("samples"), true);
+    testcards = makeCards(TEST(), $("testsamples"), revealed());
+    $("testph").hidden = revealed() || !TEST().length;
+    $("classes").innerHTML = G.train.length
+      ? `Positive class (push p→1): <b class="cls">${G.classes[0]}</b> &nbsp;·&nbsp; Negative class (push p→0): <b class="cls">${G.classes[1]}</b>`
+      : "";
+    players.forEach(p => p.refreshPix());
+  }
+
+  const players = [new Player("a"), new Player("b")];
+  const P = { a: players[0], b: players[1] };
+  const renderAll = () => players.forEach(p => p.render());
+
+  // ---------- clock + verdict ----------
+  function fmt(s) { s = Math.max(0, Math.round(s)); return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0"); }
+  function remainingSec() { return G.phase === "running" ? G.duration - (Date.now() - G.startAt) / 1000 : G.duration; }
+  setInterval(() => {
+    $("clock").textContent = fmt(remainingSec());
+    // whoever holds seat A ends the round; seat B steps in after a 2 s grace period
+    if (G.phase === "running" && db && mySeat) {
+      const r = remainingSec();
+      if ((mySeat === "a" && r <= 0) || (mySeat === "b" && r <= -2)) doReveal();
+    }
+  }, 250);
+
+  function renderGame() {
+    buildCards();
+    renderAll();
+    $("clock").textContent = fmt(remainingSec());
+    $("dur").value = String(G.duration);
+    const seated = !!mySeat, both = !!(SEATS.a && SEATS.b);
+    $("start").disabled = !seated || !both || G.phase === "running";
+    $("start").textContent = G.phase === "running" ? "Running…" : "Start round";
+    $("reveal").disabled = !seated || G.phase !== "running";
+    $("newgame").disabled = !seated || G.phase === "running";
+    $("dur").disabled = !seated || G.phase === "running";
+    players.forEach(p => p.el.classList.remove("winner"));
+    const v = $("verdict");
+    if (revealed() && TEST().length) {
+      const [a, b] = players.map(p => lossOn(p.w, TEST()));
+      if (Math.abs(a - b) < 1e-4) v.textContent = "Dead heat.";
+      else { const win = a < b ? P.a : P.b; win.el.classList.add("winner"); v.textContent = `${win.name()} wins · test loss ${Math.min(a, b).toFixed(3)}`; }
+    } else if (G.phase === "running") v.textContent = "";
+    else if (!both) v.textContent = "Waiting for two players.";
+    else v.textContent = "";
+  }
+
+  // ---------- actions (any seated player) ----------
+  async function startRound() {
+    if (!db || !mySeat) return;
+    const d = deal();
+    await Promise.all([
+      db.doc("players/a").set({ w: new Array(N).fill(0), moves: 0 }),
+      db.doc("players/b").set({ w: new Array(N).fill(0), moves: 0 }),
+    ]).catch(() => {});
+    players.forEach(p => { p.w.fill(0); p.moves = 0; });
+    await db.doc("game/state").set({ phase: "running", ...d, startAt: Date.now(), duration: +$("dur").value, best: {} }).catch(() => {});
+  }
+  async function newGame() {
+    if (!db || !mySeat) return;
+    await Promise.all([
+      db.doc("players/a").set({ w: new Array(N).fill(0), moves: 0 }),
+      db.doc("players/b").set({ w: new Array(N).fill(0), moves: 0 }),
+      db.doc("game/state").set({ phase: "lobby", classes: ["?", "?"], train: [], test: [], startAt: 0, duration: +$("dur").value, best: {} }),
+    ]).catch(() => {});
+    players.forEach(p => { p.w.fill(0); p.moves = 0; });
+  }
+  let revealing = false;
+  async function doReveal() {
+    if (!db || revealing || G.phase !== "running") return;
+    revealing = true;
+    // flush my last knob positions first so the verdict uses them
+    if (mySeat) await P[mySeat].push();
+    await db.doc("game/state").update({ phase: "revealed" }).catch(() => {});
+    revealing = false;
+  }
+  $("start").addEventListener("click", startRound);
+  $("newgame").addEventListener("click", newGame);
+  $("reveal").addEventListener("click", doReveal);
+  $("dur").addEventListener("change", () => { if (db && mySeat && G.phase !== "running") db.doc("game/state").update({ duration: +$("dur").value }).catch(() => {}); });
+
+  // ---------- seats ----------
+  function lobbyMsg(t, warn) { const m = $("lobbymsg"); m.textContent = t; m.classList.toggle("warn", !!warn); }
+  function renderLobby() {
+    for (const k of ["a", "b"]) {
+      const el = $("seat" + k.toUpperCase()), s = SEATS[k];
+      el.classList.toggle("taken", !!s);
+      el.querySelector("b").textContent = s ? (s.name || "taken") + (s.uid === myId ? " (you)" : "") : "open";
+    }
+    $("you").textContent = mySeat ? `You are Player ${mySeat === "a" ? 1 : 2}` : online ? "Spectating" : "offline";
+    $("leave").hidden = !mySeat;
+    $("resetTable").hidden = !online;
+    players.forEach(p => p.setSeat(SEATS[p.key]));
+  }
+  async function claimSeat(k) {
+    // Firestore transaction: atomic, so two people arriving at once cannot both get the same seat.
+    const ref = db.doc("seats/" + k);
+    try {
+      return await fs.runTransaction(async tx => {
+        const snap = await tx.get(ref);
+        const cur = snap.exists ? snap.data() : null;
+        if (cur && cur.uid && cur.uid !== myId) return false;
+        tx.set(ref, { uid: myId, name: cur && cur.name ? cur.name : `Player ${k === "a" ? 1 : 2}` });
+        return true;
+      });
+    } catch (e) { return false; }
+  }
+  async function takeSeat() {
+    // already seated from an earlier visit?
+    for (const k of ["a", "b"]) { const s = SEATS[k]; if (s && s.uid === myId) { mySeat = k; return; } }
+    for (const k of ["a", "b"]) {
+      if (SEATS[k] && SEATS[k].uid) continue;
+      if (await claimSeat(k)) { mySeat = k; return; }
+    }
+    mySeat = null;
+  }
+  async function leaveSeat() {
+    if (!db || !mySeat) return;
+    const k = mySeat; mySeat = null;
+    await db.doc("seats/" + k).set({ uid: null, name: null }).catch(() => {});
+    renderLobby(); renderGame();
+  }
+  async function resetTable() {
+    if (!db) return;
+    mySeat = null;
+    await Promise.all([
+      db.doc("seats/a").set({ uid: null, name: null }),
+      db.doc("seats/b").set({ uid: null, name: null }),
+      db.doc("players/a").set({ w: new Array(N).fill(0), moves: 0 }),
+      db.doc("players/b").set({ w: new Array(N).fill(0), moves: 0 }),
+      db.doc("game/state").set({ phase: "lobby", classes: ["?", "?"], train: [], test: [], startAt: 0, duration: 60, best: {} }),
+    ]).catch(() => {});
+  }
+  $("leave").addEventListener("click", leaveSeat);
+  $("resetTable").addEventListener("click", resetTable);
+
+  // ---------- boot ----------
+  renderLobby(); renderGame();
+  let fs = null;
+  (async () => {
+    if (!FIREBASE_CONFIG.projectId || FIREBASE_CONFIG.projectId.startsWith("PASTE_")) {
+      lobbyMsg("Firebase is not configured yet: paste your project's web config at the top of index.html.", true);
+      $("you").textContent = "not configured";
+      return;
+    }
+    firebase.initializeApp(FIREBASE_CONFIG);
+    fs = firebase.firestore();
+    // silent anonymous sign-in: no UI, but a stable id per browser so a reload keeps your seat
+    const cred = await firebase.auth().signInAnonymously();
+    myId = cred.user.uid;
+    // every table lives under tables/<room>; ?room=xyz in the URL picks the table (default "main")
+    const room = (new URLSearchParams(location.search).get("room") || "main").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40) || "main";
+    const table = fs.collection("tables").doc(room);
+    db = { doc: p => table.collection(p.split("/")[0]).doc(p.split("/")[1]) };
+    $("you").title = "table: " + room;
+    online = true;
+    // seats first (so the claim sees the current state), then live subscriptions
+    const seatSnaps = await Promise.all(["a", "b"].map(k => db.doc("seats/" + k).get()));
+    seatSnaps.forEach((s, i) => { SEATS["ab"[i]] = s.exists && s.data().uid ? s.data() : null; });
+    await takeSeat();
+    renderLobby();
+    lobbyMsg(mySeat ? "Seated. The round starts when a seated player presses Start." : "Both seats are taken; you are watching. Ask a player to leave their seat, or reset the table.", !mySeat);
+
+    for (const k of ["a", "b"]) {
+      db.doc("seats/" + k).onSnapshot(s => {
+        SEATS[k] = s.exists && s.data().uid ? s.data() : null;
+        if (mySeat === k && (!SEATS[k] || SEATS[k].uid !== myId)) { mySeat = null; lobbyMsg("Your seat was reset. Reload to sit down again.", true); }
+        renderLobby(); renderGame();
+      }, () => {});
+      db.doc("players/" + k).onSnapshot(s => { P[k].applyRemote(s.exists ? s.data() : null); if (revealed()) renderGame(); }, () => {});
+    }
+    db.doc("game/state").onSnapshot(s => {
+      const prev = G.phase;
+      G = s.exists ? { ...G, ...s.data() } : G;
+      if (!Array.isArray(G.train)) G.train = [];
+      if (!Array.isArray(G.test)) G.test = [];
+      if (!Array.isArray(G.classes)) G.classes = ["?", "?"];
+      if (prev !== "running" && G.phase === "running") players.forEach(p => { if (p.local) { p.w.fill(0); p.moves = 0; } });
+      renderGame();
+    }, e => lobbyMsg("Lost the connection to the table (" + e.code + "). Reload to rejoin.", true));
+  })().catch(e => lobbyMsg("Could not open the table: " + (e && e.message || e), true));
+})();
+</script>
+</body>
+</html>

@@ -65,6 +65,7 @@
   .lobby .seat i { width: 10px; height: 10px; border-radius: 50%; background: #0b0c0e; border: 1px solid var(--panel-edge); }
   .lobby .seat.a.taken i { background: var(--p1); border-color: var(--p1); }
   .lobby .seat.b.taken i { background: var(--p2); border-color: var(--p2); }
+  .lobby .kick { padding: 0 6px; font-size: .7rem; line-height: 1.4; color: var(--neg); }
   .lobby .you { font-family: var(--display); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
   .lobby .msg { color: var(--muted); flex: 1 1 100%; }
   .lobby .msg.warn { color: var(--neg); }
@@ -146,6 +147,28 @@
   .ch .pix.on { background: var(--fg); }
   .pfoot { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
   .hint { font-size: .7rem; color: var(--muted); margin: 0; }
+  /* entry screen */
+  .rooms-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .hi { font-size: .82rem; color: var(--muted); }
+  .hi b { color: var(--fg); }
+  .linkish { background: none; border: none; padding: 0; color: var(--accent); font-size: .72rem; text-transform: none; letter-spacing: 0; cursor: pointer; }
+  .rooms-foot { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .entry-name { display: flex; gap: 8px; max-width: 420px; }
+  .entry-name input { flex: 1; }
+  .entry { display: grid; gap: 18px; }
+  .entry input {
+    font-family: var(--mono); font-size: 1rem; background: #0b0c0e; color: var(--fg);
+    border: 1px solid var(--panel-edge); border-radius: 4px; padding: 8px 10px; min-width: 0;
+  }
+  .entry input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .note { font-size: .78rem; color: var(--muted); margin: 0; }
+  .rooms { display: grid; gap: 6px; }
+  .room-row { display: flex; align-items: center; gap: 10px; background: #0b0c0e; border-radius: 4px; padding: 8px 10px; font-size: .82rem; }
+  .room-row .host { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .room-row .code { font-family: var(--display); letter-spacing: .12em; color: var(--accent); }
+  .room-row .age { color: var(--muted); font-size: .72rem; }
+  .lobby .room { display: flex; align-items: center; gap: 8px; }
+  .lobby .room b { font-family: var(--display); font-size: 1.1rem; letter-spacing: .14em; color: var(--accent); }
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
@@ -156,12 +179,38 @@
     <p>Two mixers, one dataset, online. Each game draws two characters from 0–9 and A–Z; each player tunes 16 weights of their own logistic regression (bias fixed at 0) to tell them apart. When the clock runs out, 6 unseen test images decide the winner: lowest test loss takes it.</p>
   </header>
 
+  <!-- entry: step 1 name, step 2 rooms -->
+  <section class="panel entry" id="entry">
+    <div id="stepName" class="step">
+      <p class="label">Step 1 · Who are you?</p>
+      <div class="entry-name">
+        <input id="nameIn" maxlength="20" placeholder="Your name" autocomplete="nickname" aria-label="Your name">
+        <button class="go" id="nameBtn" type="button">Continue</button>
+      </div>
+    </div>
+    <div id="stepRooms" class="step" hidden>
+      <div class="rooms-head">
+        <p class="label">Step 2 · Pick a room</p>
+        <span class="hi">Hi, <b id="hiName"></b> <button type="button" id="changeName" class="linkish">change</button></span>
+      </div>
+      <div class="rooms" id="rooms"><p class="note">Looking for open rooms…</p></div>
+      <div class="rooms-foot">
+        <button class="go" id="createBtn" type="button">Create new room</button>
+        <span class="note">A room is deleted if nobody joins within 15 minutes.</span>
+      </div>
+    </div>
+    <p class="msg warn" id="entrymsg" hidden></p>
+  </section>
+
+  <div id="table" hidden>
   <section class="panel lobby" id="lobby">
-    <span class="seat a" id="seatA"><i></i>Seat 1: <b>open</b></span>
-    <span class="seat b" id="seatB"><i></i>Seat 2: <b>open</b></span>
+    <span class="room"><span class="label" style="margin:0">Table</span> <b id="roomCode">—</b> <button id="copyLink" type="button" title="Copy invite link">Copy invite link</button></span>
+    <span class="seat a" id="seatA"><i></i>Seat 1: <b>open</b> <button type="button" class="kick" id="kickA" hidden title="Free this seat">✕</button></span>
+    <span class="seat b" id="seatB"><i></i>Seat 2: <b>open</b> <button type="button" class="kick" id="kickB" hidden title="Free this seat">✕</button></span>
     <span class="you" id="you">connecting…</span>
     <button id="leave" type="button" hidden>Leave seat</button>
     <button id="resetTable" type="button" hidden>Reset table</button>
+    <button id="exitTable" type="button">Leave room</button>
     <span class="msg" id="lobbymsg">Opening the table…</span>
   </section>
 
@@ -199,6 +248,7 @@
 
   <div class="players" id="players"></div>
   <p class="hint">Drag a knob up or down, or scroll over it. Arrow keys work too; double-click resets to 0. You can only turn the knobs on your own mixer.</p>
+  </div>
 </div>
 
 <script>
@@ -316,7 +366,7 @@
       for (let i = 0; i < N; i++) this.addKnob(i);
       el.querySelector(".zero").addEventListener("click", () => { if (this.local) { this.w.fill(0); this.moves++; this.changed(); } });
       const nameIn = el.querySelector(".pname");
-      nameIn.addEventListener("change", () => { if (this.local && db) db.doc("seats/" + key).update({ name: nameIn.value.slice(0, 20) }).catch(() => {}); });
+      nameIn.addEventListener("change", () => { if (this.local && db) { myName = nameIn.value.trim().slice(0, 20) || myName; try { localStorage.setItem("nb_name", myName); } catch (e) {} db.doc("seats/" + key).update({ name: myName }).catch(() => {}); } });
     }
     addKnob(i) {
       const ch = document.createElement("div");
@@ -539,11 +589,16 @@
 
   // ---------- seats ----------
   function lobbyMsg(t, warn) { const m = $("lobbymsg"); m.textContent = t; m.classList.toggle("warn", !!warn); }
+  // A seated player's page writes a heartbeat every 20 s. A seat whose last heartbeat is older
+  // than STALE_MS counts as abandoned: it shows as "idle" and a newcomer may take it over.
+  const HEARTBEAT_MS = 20000, STALE_MS = 90000;
+  const seatStale = s => !!(s && s.uid && (!s.seen || Date.now() - s.seen > STALE_MS));
   function renderLobby() {
     for (const k of ["a", "b"]) {
       const el = $("seat" + k.toUpperCase()), s = SEATS[k];
       el.classList.toggle("taken", !!s);
-      el.querySelector("b").textContent = s ? (s.name || "taken") + (s.uid === myId ? " (you)" : "") : "open";
+      el.querySelector("b").textContent = s ? (s.name || "taken") + (s.uid === myId ? " (you)" : seatStale(s) ? " (idle)" : "") : "open";
+      el.querySelector(".kick").hidden = !online || !s || s.uid === myId;
     }
     $("you").textContent = mySeat ? `You are Player ${mySeat === "a" ? 1 : 2}` : online ? "Spectating" : "offline";
     $("leave").hidden = !mySeat;
@@ -557,8 +612,9 @@
       return await fs.runTransaction(async tx => {
         const snap = await tx.get(ref);
         const cur = snap.exists ? snap.data() : null;
-        if (cur && cur.uid && cur.uid !== myId) return false;
-        tx.set(ref, { uid: myId, name: cur && cur.name ? cur.name : `Player ${k === "a" ? 1 : 2}` });
+        if (cur && cur.uid && cur.uid !== myId && !seatStale(cur)) return false;
+        const mine = cur && cur.uid === myId;
+        tx.set(ref, { uid: myId, name: myName || (mine && cur.name) || `Player ${k === "a" ? 1 : 2}`, seen: Date.now() });
         return true;
       });
     } catch (e) { return false; }
@@ -567,11 +623,20 @@
     // already seated from an earlier visit?
     for (const k of ["a", "b"]) { const s = SEATS[k]; if (s && s.uid === myId) { mySeat = k; return; } }
     for (const k of ["a", "b"]) {
-      if (SEATS[k] && SEATS[k].uid) continue;
+      if (SEATS[k] && SEATS[k].uid && !seatStale(SEATS[k])) continue;
       if (await claimSeat(k)) { mySeat = k; return; }
     }
     mySeat = null;
   }
+  async function freeSeat(k) {
+    if (!db || !SEATS[k]) return;
+    await db.doc("seats/" + k).set({ uid: null, name: null, seen: 0 }).catch(() => {});
+    await db.doc("players/" + k).set({ w: new Array(N).fill(0), moves: 0 }).catch(() => {});
+  }
+  setInterval(() => { if (db && mySeat) { db.doc("seats/" + mySeat).update({ seen: Date.now() }).catch(() => {}); if (roomRef) roomRef.update({ updatedAt: Date.now() }).catch(() => {}); } }, HEARTBEAT_MS);
+  setInterval(() => { if (online) renderLobby(); }, 15000);  // refresh the "(idle)" tags
+  $("kickA").addEventListener("click", () => freeSeat("a"));
+  $("kickB").addEventListener("click", () => freeSeat("b"));
   async function leaveSeat() {
     if (!db || !mySeat) return;
     const k = mySeat; mySeat = null;
@@ -592,42 +657,174 @@
   $("leave").addEventListener("click", leaveSeat);
   $("resetTable").addEventListener("click", resetTable);
 
-  // ---------- boot ----------
-  renderLobby(); renderGame();
-  let fs = null;
-  (async () => {
-    if (!FIREBASE_CONFIG.projectId || FIREBASE_CONFIG.projectId.startsWith("PASTE_")) {
-      lobbyMsg("Firebase is not configured yet: paste your project's web config at the top of index.html.", true);
-      $("you").textContent = "not configured";
+  // ---------- rooms ----------
+  const WAIT_TTL_MS = 15 * 60 * 1000;   // a room nobody joined within 15 min is deleted
+  const DEAD_TTL_MS = 30 * 60 * 1000;   // a room with no heartbeat for 30 min is deleted (players vanished)
+  const CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";  // no 0/O, 1/I/L
+  const makeCode = () => Array.from({ length: 4 }, () => CODE_CHARS[rnd(CODE_CHARS.length)]).join("");
+  const cleanCode = c => (c || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+  let fs = null, myName = "", roomCode = "", roomRef = null, unsubs = [], pendingCode = "";
+  try { myName = localStorage.getItem("nb_name") || ""; } catch (e) {}
+
+  function roomUrl(code) { const u = new URL(location.href); u.search = "?room=" + code; return u.toString(); }
+  function entryMsg(t) { const m = $("entrymsg"); m.textContent = t || ""; m.hidden = !t; }
+  const roomExpired = r => !r || (r.status === "waiting" && Date.now() - (r.createdAt || 0) > WAIT_TTL_MS)
+                        || Date.now() - (r.updatedAt || r.createdAt || 0) > DEAD_TTL_MS;
+
+  async function deleteRoom(ref) {
+    await Promise.all([
+      ref.collection("seats").doc("a").delete(), ref.collection("seats").doc("b").delete(),
+      ref.collection("players").doc("a").delete(), ref.collection("players").doc("b").delete(),
+      ref.collection("game").doc("state").delete(), ref.delete(),
+    ]).catch(() => {});
+  }
+  async function createRoom() {
+    for (let t = 0; t < 5; t++) {
+      const code = makeCode(), ref = fs.collection("tables").doc(code);
+      const snap = await ref.get();
+      if (snap.exists && !roomExpired(snap.data())) continue;  // code in use
+      await Promise.all([
+        ref.set({ code, host: myName, createdAt: Date.now(), updatedAt: Date.now(), status: "waiting" }),
+        ref.collection("seats").doc("a").set({ uid: null, name: null, seen: 0 }),
+        ref.collection("seats").doc("b").set({ uid: null, name: null, seen: 0 }),
+        ref.collection("players").doc("a").set({ w: new Array(N).fill(0), moves: 0 }),
+        ref.collection("players").doc("b").set({ w: new Array(N).fill(0), moves: 0 }),
+        ref.collection("game").doc("state").set({ phase: "lobby", classes: ["?", "?"], train: [], test: [], startAt: 0, duration: 60, best: {} }),
+      ]);
+      history.replaceState(null, "", roomUrl(code));
+      return enterTable(code);
+    }
+    entryMsg("Could not find a free room code; try again.");
+  }
+  async function joinRoom(code) {
+    code = cleanCode(code);
+    const ref = fs.collection("tables").doc(code);
+    const snap = await ref.get();
+    if (!snap.exists || roomExpired(snap.data())) {
+      if (snap.exists) deleteRoom(ref);
+      entryMsg(`Room ${code} is gone (nobody joined it in time, or the players left).`);
       return;
     }
-    firebase.initializeApp(FIREBASE_CONFIG);
-    fs = firebase.firestore();
-    // silent anonymous sign-in: no UI, but a stable id per browser so a reload keeps your seat
-    const cred = await firebase.auth().signInAnonymously();
-    myId = cred.user.uid;
-    // every table lives under tables/<room>; ?room=xyz in the URL picks the table (default "main")
-    const room = (new URLSearchParams(location.search).get("room") || "main").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40) || "main";
-    const table = fs.collection("tables").doc(room);
-    db = { doc: p => table.collection(p.split("/")[0]).doc(p.split("/")[1]) };
-    $("you").title = "table: " + room;
+    history.replaceState(null, "", roomUrl(code));
+    return enterTable(code);
+  }
+  function fmtAge(ms) { const m = Math.floor(ms / 60000); return m < 1 ? "just now" : m + " min ago"; }
+  function watchRooms() {
+    const q = fs.collection("tables").where("status", "==", "waiting").limit(50);
+    return q.onSnapshot(snap => {
+      const host = $("rooms"); host.innerHTML = "";
+      const rows = [];
+      snap.docs.forEach(d => { const r = d.data(); if (roomExpired(r)) deleteRoom(d.ref); else rows.push(r); });
+      rows.sort((x, y) => (y.createdAt || 0) - (x.createdAt || 0));
+      if (!rows.length) { host.innerHTML = '<p class="note">No room is waiting for a player right now. Create one.</p>'; return; }
+      for (const r of rows.slice(0, 20)) {
+        const row = document.createElement("div");
+        row.className = "room-row";
+        row.innerHTML = `<span class="code"></span><span class="host"></span><span class="age"></span><button type="button">Join</button>`;
+        row.querySelector(".code").textContent = r.code;
+        row.querySelector(".host").textContent = (r.host || "someone") + " is waiting for an opponent";
+        row.querySelector(".age").textContent = "created " + fmtAge(Date.now() - (r.createdAt || 0));
+        row.querySelector("button").addEventListener("click", () => joinRoom(r.code).catch(e => entryMsg("Could not join: " + (e && e.message || e))));
+        host.appendChild(row);
+      }
+    }, e => { $("rooms").innerHTML = '<p class="note">Could not list rooms (' + e.code + '). Check the Firestore rules.</p>'; });
+  }
+  // keep the room's "waiting" / "full" flag in step with the seats, so the list stays honest
+  async function syncRoomStatus() {
+    if (!roomRef || !mySeat) return;
+    const live = k => !!(SEATS[k] && SEATS[k].uid && !seatStale(SEATS[k]));
+    const status = live("a") && live("b") ? "full" : "waiting";
+    if (roomRef._status !== status) { roomRef._status = status; await roomRef.update({ status, updatedAt: Date.now() }).catch(() => {}); }
+  }
+  // host-side expiry: if I'm alone at my own room for 15 min, close it and go back to the list
+  setInterval(() => {
+    if (!roomRef || !mySeat) return;
+    const other = mySeat === "a" ? "b" : "a";
+    const alone = !(SEATS[other] && SEATS[other].uid && !seatStale(SEATS[other]));
+    if (alone && G.phase !== "running" && Date.now() - (roomRef._openedAt || Date.now()) > WAIT_TTL_MS) {
+      const ref = roomRef; mySeat = null;
+      deleteRoom(ref).then(() => { showRooms(); entryMsg("Your room was closed: nobody joined within 15 minutes."); });
+    }
+  }, 30000);
+
+  // ---------- entry steps ----------
+  function showName() {
+    $("table").hidden = true; $("entry").hidden = false;
+    $("stepName").hidden = false; $("stepRooms").hidden = true;
+    $("nameIn").value = myName; $("nameIn").focus();
+  }
+  function showRooms() {
+    for (const u of unsubs) u(); unsubs = [];
+    mySeat = null; online = false; db = null; roomRef = null;
+    $("table").hidden = true; $("entry").hidden = false;
+    $("stepName").hidden = true; $("stepRooms").hidden = false;
+    $("hiName").textContent = myName;
+    history.replaceState(null, "", location.pathname);
+    unsubs.push(watchRooms());
+  }
+  $("nameBtn").addEventListener("click", () => {
+    const v = $("nameIn").value.trim().slice(0, 20);
+    if (!v) { entryMsg("Type your name first."); $("nameIn").focus(); return; }
+    myName = v; try { localStorage.setItem("nb_name", v); } catch (e) {}
+    entryMsg("");
+    if (pendingCode) { const c = pendingCode; pendingCode = ""; joinRoom(c).then(ok => { if (!roomRef) showRooms(); }).catch(e => { entryMsg("Could not join: " + (e && e.message || e)); showRooms(); }); }
+    else showRooms();
+  });
+  $("nameIn").addEventListener("keydown", e => { if (e.key === "Enter") $("nameBtn").click(); });
+  $("changeName").addEventListener("click", () => { for (const u of unsubs) u(); unsubs = []; showName(); });
+  $("createBtn").addEventListener("click", () => createRoom().catch(e => entryMsg("Could not create the room: " + (e && e.message || e))));
+  $("exitTable").addEventListener("click", async () => {
+    if (mySeat) {
+      const other = mySeat === "a" ? "b" : "a";
+      const alone = !(SEATS[other] && SEATS[other].uid && !seatStale(SEATS[other]));
+      const ref = roomRef;
+      await leaveSeat();
+      if (alone) await deleteRoom(ref);   // last one out closes the room
+    }
+    showRooms();
+  });
+  $("copyLink").addEventListener("click", async () => {
+    const url = roomUrl(roomCode), b = $("copyLink");
+    try { await navigator.clipboard.writeText(url); b.textContent = "Copied"; }
+    catch (e) { prompt("Copy this link:", url); }
+    setTimeout(() => b.textContent = "Copy invite link", 1500);
+  });
+
+  // ---------- table ----------
+  async function enterTable(code) {
+    for (const u of unsubs) u(); unsubs = [];
+    roomCode = code;
+    roomRef = fs.collection("tables").doc(code);
+    roomRef._openedAt = Date.now();
+    db = { doc: p => roomRef.collection(p.split("/")[0]).doc(p.split("/")[1]) };
+    $("entry").hidden = true; $("table").hidden = false;
+    $("roomCode").textContent = code;
+    $("copyLink").textContent = "Copy invite link";
+    G = { phase: "lobby", classes: ["?", "?"], train: [], test: [], startAt: 0, duration: 60 };
+    SEATS = { a: null, b: null }; cardsKey = "";
+    players.forEach(p => { p.w.fill(0); p.moves = 0; p.local = false; });
     online = true;
+    lobbyMsg("Opening the table…");
+    renderLobby(); renderGame();
+
     // seats first (so the claim sees the current state), then live subscriptions
     const seatSnaps = await Promise.all(["a", "b"].map(k => db.doc("seats/" + k).get()));
     seatSnaps.forEach((s, i) => { SEATS["ab"[i]] = s.exists && s.data().uid ? s.data() : null; });
     await takeSeat();
     renderLobby();
-    lobbyMsg(mySeat ? "Seated. The round starts when a seated player presses Start." : "Both seats are taken; you are watching. Ask a player to leave their seat, or reset the table.", !mySeat);
+    lobbyMsg(mySeat
+      ? (SEATS.a && SEATS.b && SEATS.a.uid && SEATS.b.uid ? "Seated. Any seated player can press Start." : "Seated. Send the invite link to your opponent and wait for them to join.")
+      : "Both seats are taken; you are watching. Ask a player to leave their seat, or reset the table.", !mySeat);
 
     for (const k of ["a", "b"]) {
-      db.doc("seats/" + k).onSnapshot(s => {
+      unsubs.push(db.doc("seats/" + k).onSnapshot(s => {
         SEATS[k] = s.exists && s.data().uid ? s.data() : null;
-        if (mySeat === k && (!SEATS[k] || SEATS[k].uid !== myId)) { mySeat = null; lobbyMsg("Your seat was reset. Reload to sit down again.", true); }
-        renderLobby(); renderGame();
-      }, () => {});
-      db.doc("players/" + k).onSnapshot(s => { P[k].applyRemote(s.exists ? s.data() : null); if (revealed()) renderGame(); }, () => {});
+        if (mySeat === k && (!SEATS[k] || SEATS[k].uid !== myId)) { mySeat = null; lobbyMsg("You were removed from your seat. Go back to the room list and join again if a seat is free.", true); }
+        renderLobby(); renderGame(); syncRoomStatus();
+      }, () => {}));
+      unsubs.push(db.doc("players/" + k).onSnapshot(s => { P[k].applyRemote(s.exists ? s.data() : null); if (revealed()) renderGame(); }, () => {}));
     }
-    db.doc("game/state").onSnapshot(s => {
+    unsubs.push(db.doc("game/state").onSnapshot(s => {
       const prev = G.phase;
       G = s.exists ? { ...G, ...s.data() } : G;
       if (!Array.isArray(G.train)) G.train = [];
@@ -635,8 +832,32 @@
       if (!Array.isArray(G.classes)) G.classes = ["?", "?"];
       if (prev !== "running" && G.phase === "running") players.forEach(p => { if (p.local) { p.w.fill(0); p.moves = 0; } });
       renderGame();
-    }, e => lobbyMsg("Lost the connection to the table (" + e.code + "). Reload to rejoin.", true));
-  })().catch(e => lobbyMsg("Could not open the table: " + (e && e.message || e), true));
+    }, e => lobbyMsg("Lost the connection to the table (" + e.code + "). Reload to rejoin.", true)));
+  }
+
+  // ---------- boot ----------
+  renderLobby(); renderGame();
+  (async () => {
+    if (!FIREBASE_CONFIG.projectId || FIREBASE_CONFIG.projectId.startsWith("PASTE_")) {
+      entryMsg("Firebase is not configured yet: paste your project's web config at the top of index.html.");
+      return;
+    }
+    firebase.initializeApp(FIREBASE_CONFIG);
+    fs = firebase.firestore();
+    // silent anonymous sign-in: no UI, but a stable id per browser so a reload keeps your seat
+    const cred = await firebase.auth().signInAnonymously();
+    myId = cred.user.uid;
+    const code = cleanCode(new URLSearchParams(location.search).get("room"));
+    if (code && myName) {
+      // invite link, name known: go straight to the room
+      try { await joinRoom(code); } catch (e) { entryMsg("Could not join: " + (e && e.message || e)); }
+      if (!roomRef) showRooms();
+    } else {
+      pendingCode = code;   // invite link, name unknown: ask the name, then join
+      showName();
+      if (code) entryMsg(`You were invited to room ${code}. Type your name to join it.`);
+    }
+  })().catch(e => entryMsg("Could not connect: " + (e && e.message || e)));
 })();
 </script>
 </body>
